@@ -1,0 +1,5 @@
+models/*.pt
+venv/
+runs/
+videos/
+__pycache__/

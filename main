@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""
+Main entrypoint for Thesis_Final pipeline.
+
+Runs five stages in order:
+1) get_bases.py
+2) get_players.py
+3) filter_region.py
+4) get_velocity.py
+5) get_final_video.py
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def parse_args() -> argparse.Namespace:
+    this_dir = Path(__file__).resolve().parent
+    models_dir = this_dir / "models"
+
+    parser = argparse.ArgumentParser(description="Run full baseball tracking pipeline on one video.")
+    parser.add_argument("--video", type=Path, required=True, help="Input video path.")
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=None,
+        help="Output run directory (default: Thesis_Final/runs/<video_stem>).",
+    )
+
+    parser.add_argument(
+        "--base-model",
+        type=Path,
+        default=models_dir / "base_best.pt",
+        help="YOLO weights for base detection stage.",
+    )
+    parser.add_argument(
+        "--player-yolo-weights",
+        type=Path,
+        default=models_dir / "player_detect_yolov8l_best.pt",
+        help="YOLO weights for player detection stage (default: models/player_detect_yolov8l_best.pt).",
+    )
+    parser.add_argument(
+        "--sam-weights",
+        type=str,
+        default=str(models_dir / "sam2.1_l.pt"),
+        help="SAM weights for player stage.",
+    )
+
+    parser.add_argument("--device", type=str, default="0", help="Inference device used by stages.")
+    parser.add_argument(
+        "--player-class",
+        type=int,
+        default=4,
+        help="Player class index for player detection model (default: 4 for player_detect_yolov8l_best.pt).",
+    )
+    parser.add_argument("--max-frames", type=int, default=0, help="Max frames (0=all).")
+    parser.add_argument("--fps", type=float, default=0.0, help="Output FPS override (0 keeps source fps).")
+
+    parser.add_argument("--base-frame-step", type=int, default=1, help="Use every Nth frame for averaging in get_bases.")
+    parser.add_argument("--base-max-width", type=int, default=1280, help="Resize width cap for get_bases.")
+
+    parser.add_argument(
+        "--grass-radius-ft",
+        type=float,
+        default=95.0,
+        help="Grass-line radius in feet from the configured origin.",
+    )
+    parser.add_argument(
+        "--mound-distance-ft",
+        type=float,
+        default=60.5,
+        help="Distance from home plate to mound center in feet.",
+    )
+    parser.add_argument(
+        "--foul-line-buffer-ft",
+        type=float,
+        default=0.0,
+        help="Tolerance buffer (feet) outside first/third foul lines.",
+    )
+    parser.add_argument(
+        "--grass-radius-origin",
+        type=str,
+        choices=["home", "mound"],
+        default="mound",
+        help="Origin for grass-line radius measurement.",
+    )
+    parser.add_argument("--third-to-grass-ft", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--first-to-grass-ft", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--track-min-inside-ratio", type=float, default=0.35)
+    parser.add_argument("--track-min-inside-count", type=int, default=15)
+    parser.add_argument(
+        "--contact-bottom-frac",
+        type=float,
+        default=0.08,
+        help="Bottom fraction of SAM mask pixels used for robust contact-point estimation.",
+    )
+    parser.add_argument(
+        "--contact-mode",
+        type=str,
+        default="sam",
+        choices=["sam", "bbox_bottom", "hybrid"],
+        help=(
+            "Ground-contact mode for player stage: "
+            "sam (SAM robust), bbox_bottom (box bottom-center), hybrid (box-center x + SAM bottom y)."
+        ),
+    )
+    parser.add_argument(
+        "--contact-smooth-method",
+        type=str,
+        default="sliding_median",
+        choices=["none", "sliding_median"],
+        help="Per-track smoothing method for player-stage contact trajectories.",
+    )
+    parser.add_argument(
+        "--contact-smooth-window",
+        type=int,
+        default=5,
+        help="Sliding-median window size (samples) used to smooth player-stage contact trajectories.",
+    )
+    parser.add_argument(
+        "--velocity-max-step-ft",
+        type=float,
+        default=20.0,
+        help="Ignore per-step velocity samples above this distance in get_velocity.",
+    )
+    parser.add_argument(
+        "--velocity-smooth-window",
+        type=int,
+        default=5,
+        help="Moving-average window size (samples) for velocity smoothing.",
+    )
+    parser.add_argument(
+        "--birdseye-scale",
+        type=float,
+        default=6.0,
+        help="Pixels per foot for bird's-eye render in velocity stage.",
+    )
+    parser.add_argument(
+        "--birdseye-pad-ft",
+        type=float,
+        default=15.0,
+        help="Padding around bird's-eye field extents in feet.",
+    )
+    parser.add_argument(
+        "--birdseye-trail-length",
+        type=int,
+        default=45,
+        help="Trail length (points) per track in bird's-eye video.",
+    )
+    parser.add_argument(
+        "--birdseye-trail-max-gap-frames",
+        type=int,
+        default=45,
+        help="Hide tracks after this many missing frames in bird's-eye video.",
+    )
+
+    parser.add_argument("--no-video", action="store_true", help="Disable stage overlay videos.")
+    return parser.parse_args()
+
+
+def run_cmd(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
+
+
+def main() -> None:
+    args = parse_args()
+    this_dir = Path(__file__).resolve().parent
+    python_exe = sys.executable
+
+    video_path = args.video.resolve()
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    work_dir = args.work_dir.resolve() if args.work_dir else (this_dir / "runs" / video_path.stem)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    bases_dir = work_dir / "01_bases"
+    players_dir = work_dir / "02_players"
+    infield_dir = work_dir / "03_infield_cone"
+    velocity_dir = work_dir / "04_velocity"
+    final_video_dir = work_dir / "05_final_video"
+
+    cmd_bases = [
+        python_exe,
+        str(this_dir / "get_bases.py"),
+        "--video",
+        str(video_path),
+        "--output-dir",
+        str(bases_dir),
+        "--base-model",
+        str(args.base_model),
+        "--device",
+        str(args.device),
+        "--frame-step",
+        str(args.base_frame_step),
+        "--max-width",
+        str(args.base_max_width),
+    ]
+    run_cmd(cmd_bases)
+
+    base_meta_json = bases_dir / "run_meta_bases.json"
+    if not base_meta_json.exists():
+        raise RuntimeError(f"Base stage did not produce metadata: {base_meta_json}")
+
+    cmd_players = [
+        python_exe,
+        str(this_dir / "get_players.py"),
+        "--video",
+        str(video_path),
+        "--output-dir",
+        str(players_dir),
+        "--yolo-weights",
+        str(args.player_yolo_weights),
+        "--sam-weights",
+        str(args.sam_weights),
+        "--person-class",
+        str(args.player_class),
+        "--contact-bottom-frac",
+        str(args.contact_bottom_frac),
+        "--contact-mode",
+        str(args.contact_mode),
+        "--contact-smooth-method",
+        str(args.contact_smooth_method),
+        "--contact-smooth-window",
+        str(args.contact_smooth_window),
+        "--device",
+        str(args.device),
+        "--max-frames",
+        str(args.max_frames),
+    ]
+    if args.fps > 0:
+        cmd_players.extend(["--fps", str(args.fps)])
+    if args.no_video:
+        cmd_players.append("--no-video")
+    run_cmd(cmd_players)
+
+    players_csv = players_dir / "tracks" / "tracks_with_sam_contact.csv"
+    players_meta_json = players_dir / "run_meta_players.json"
+    if not players_csv.exists():
+        raise RuntimeError(f"Player stage did not produce tracks CSV: {players_csv}")
+
+    filter_fps = args.fps if args.fps > 0 else 30.0
+    if players_meta_json.exists() and args.fps <= 0:
+        players_meta = json.loads(players_meta_json.read_text(encoding="utf-8"))
+        filter_fps = float(players_meta.get("pipeline_fps") or 30.0)
+
+    grass_radius_ft = float(args.grass_radius_ft)
+    foul_line_buffer_ft = float(args.foul_line_buffer_ft)
+    if args.third_to_grass_ft is not None:
+        foul_line_buffer_ft = max(0.0, float(args.third_to_grass_ft))
+
+    cmd_filter = [
+        python_exe,
+        str(this_dir / "filter_region.py"),
+        "--players-csv",
+        str(players_csv),
+        "--base-meta-json",
+        str(base_meta_json),
+        "--output-dir",
+        str(infield_dir),
+        "--grass-radius-ft",
+        str(grass_radius_ft),
+        "--mound-distance-ft",
+        str(args.mound_distance_ft),
+        "--grass-radius-origin",
+        str(args.grass_radius_origin),
+        "--foul-line-buffer-ft",
+        str(foul_line_buffer_ft),
+        "--track-min-inside-ratio",
+        str(args.track_min_inside_ratio),
+        "--track-min-inside-count",
+        str(args.track_min_inside_count),
+        "--fps",
+        str(filter_fps),
+    ]
+    if args.first_to_grass_ft is not None:
+        cmd_filter.extend(["--first-to-grass-ft", str(args.first_to_grass_ft)])
+    if args.no_video:
+        cmd_filter.append("--no-video")
+    run_cmd(cmd_filter)
+
+    filtered_csv = infield_dir / "tracks_with_sam_contact_infield_custom.csv"
+    infield_meta_json = infield_dir / "run_meta_infield_custom.json"
+    if not filtered_csv.exists():
+        raise RuntimeError(f"Filter stage did not produce filtered CSV: {filtered_csv}")
+
+    cmd_velocity = [
+        python_exe,
+        str(this_dir / "get_velocity.py"),
+        "--tracks-csv",
+        str(filtered_csv),
+        "--output-dir",
+        str(velocity_dir),
+        "--fps",
+        str(filter_fps),
+        "--max-step-ft",
+        str(args.velocity_max_step_ft),
+        "--smooth-window",
+        str(args.velocity_smooth_window),
+        "--birdseye-scale",
+        str(args.birdseye_scale),
+        "--birdseye-pad-ft",
+        str(args.birdseye_pad_ft),
+        "--trail-length",
+        str(args.birdseye_trail_length),
+        "--trail-max-gap-frames",
+        str(args.birdseye_trail_max_gap_frames),
+    ]
+    if infield_meta_json.exists():
+        cmd_velocity.extend(["--filter-meta-json", str(infield_meta_json)])
+    if args.no_video:
+        cmd_velocity.append("--no-video")
+    run_cmd(cmd_velocity)
+
+    cmd_final_video: list[str] | None = None
+    final_video_meta: str | None = None
+    final_combined_video: str | None = None
+    if not args.no_video:
+        velocity_overlay_video = velocity_dir / "tracks_velocity_overlay.mp4"
+        birdseye_video = velocity_dir / "birdseye_contacts_velocity.mp4"
+        if not velocity_overlay_video.exists():
+            raise RuntimeError(f"Velocity stage missing overlay video: {velocity_overlay_video}")
+        if not birdseye_video.exists():
+            raise RuntimeError(f"Velocity stage missing bird's-eye video: {birdseye_video}")
+
+        cmd_final_video = [
+            python_exe,
+            str(this_dir / "get_final_video.py"),
+            "--velocity-video",
+            str(velocity_overlay_video),
+            "--birdseye-video",
+            str(birdseye_video),
+            "--output-dir",
+            str(final_video_dir),
+            "--fps",
+            str(filter_fps),
+        ]
+        run_cmd(cmd_final_video)
+        final_video_meta = str(final_video_dir / "run_meta_final_video.json")
+        final_combined_video = str(final_video_dir / "velocity_birdseye_side_by_side.mp4")
+
+    final_meta = {
+        "video": str(video_path),
+        "work_dir": str(work_dir),
+        "stages": {
+            "get_bases": {
+                "command": cmd_bases,
+                "meta": str(base_meta_json),
+            },
+            "get_players": {
+                "command": cmd_players,
+                "meta": str(players_meta_json),
+                "tracks_csv": str(players_csv),
+            },
+            "filter_region": {
+                "command": cmd_filter,
+                "meta": str(infield_dir / "run_meta_filter_region.json"),
+                "filtered_csv": str(infield_dir / "tracks_with_sam_contact_infield_custom.csv"),
+                "filtered_overlay_image": str(infield_dir / "tracks_sam_overlay_infield_custom.png"),
+            },
+            "get_velocity": {
+                "command": cmd_velocity,
+                "meta": str(velocity_dir / "run_meta_get_velocity.json"),
+                "velocity_csv": str(velocity_dir / "tracks_with_velocity.csv"),
+                "velocity_summary_csv": str(velocity_dir / "velocity_summary.csv"),
+                "birdseye_image": str(velocity_dir / "birdseye_contacts_velocity.png"),
+                "birdseye_video": None if args.no_video else str(velocity_dir / "birdseye_contacts_velocity.mp4"),
+                "overlay_video": None if args.no_video else str(velocity_dir / "tracks_velocity_overlay.mp4"),
+            },
+            "get_final_video": {
+                "command": cmd_final_video,
+                "meta": final_video_meta,
+                "combined_video": final_combined_video,
+            },
+        },
+    }
+
+    out_meta = work_dir / "run_meta_main.json"
+    out_meta.write_text(json.dumps(final_meta, indent=2), encoding="utf-8")
+
+    print("Thesis_Final pipeline complete.")
+    print(f"Run dir: {work_dir}")
+    print(f"Main meta: {out_meta}")
+
+
+if __name__ == "__main__":
+    main()
