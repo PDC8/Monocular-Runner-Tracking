@@ -1,3 +1,4 @@
+models/*.pt
 venv/
 runs/
 videos/
