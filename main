@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--work-dir",
         type=Path,
         default=None,
-        help="Output run directory (default: Thesis_Final/runs/<video_stem>).",
+        help="Output run directory (default: runs/<video_stem>).",
     )
 
     parser.add_argument(

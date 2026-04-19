@@ -1,6 +1,18 @@
-# Thesis_Final Pipeline
+# Runner Tracking And Translation To 2D Field Coordinates From Wide Broadcast Video
 
 Run these commands from the project root.
+
+## Create Virtual Environment
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+## Install Dependencies
+```bash
+pip install -r requirements.txt
+```
 
 ## Model Setup
 
@@ -24,28 +36,49 @@ GITHUB_REPO=OWNER/REPO MODEL_RELEASE_TAG=models-v2 ./download_models.sh
 
 Each download is verified with a SHA-256 checksum before the file is accepted.
 
-## Quick Start
+## Running The Pipeline
+
+Minimum command:
 
 ```bash
-# If you are currently one level above the repo:
-cd Monocular_Runner_Tracking
-
-./download_models.sh
 ./venv/bin/python main \
-  --video videos/234595382.mp4 \
-  --work-dir runs/234595382_main_test_20260415
+  --video path/to/input_video.mp4
 ```
 
-## Default Paths Used By `main`
+Common optional overrides:
 
-When you do not pass model-path flags, `main` uses:
+```bash
+./venv/bin/python main \
+  --video path/to/input_video.mp4 \
+  --work-dir runs/my_run \
+  --contact-mode hybrid \
+  --no-video
+```
 
-- `--base-model`: `models/base_best.pt`
-- `--player-yolo-weights`: `models/player_detect_best.pt`
-- `--sam-weights`: `models/sam2.1_l.pt`
-- `--player-class`: `4` (matches `Player` in `player_detect_best.pt`)
+## Flags
 
-Main output goes under `--work-dir` in fixed stage folders:
+- Required: `--video`
+- Optional: `--work-dir`
+  Default: `runs/<video_stem>/`
+- Optional: `--contact-mode`
+  Default: `hybrid`
+  Choices: `sam`, `bbox_bottom`, `hybrid`
+- Optional: `--no-video`
+  Default: off
+  Add this flag to skip stage overlay videos.
+- Optional: `--max-frames`
+  Default: `0` (`0` means process all frames)
+- Optional: `--fps`
+  Default: `0` (`0` keeps the source video FPS)
+- Optional: `--device`
+  Default: auto-detect `CUDA`, then `MPS`, else `CPU`
+
+
+## Output Layout
+
+If you do not pass `--work-dir`, the pipeline writes to `runs/<video_stem>/`.
+
+Inside the run directory, `main` creates these fixed stage folders:
 
 - `01_bases/`
 - `02_players/`
@@ -64,14 +97,7 @@ Use `--contact-mode` to choose how ground contact is defined:
 Examples:
 
 ```bash
-./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_sam --contact-mode sam
-./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_bbox_bottom --contact-mode bbox_bottom
-./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_hybrid --contact-mode hybrid
-```
-
-## Optional Flags
-
-```bash
-# Disable stage videos for faster test runs
-./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_no_video --no-video
+./venv/bin/python main --video path/to/input_video.mp4 --work-dir runs/contact_sam --contact-mode sam
+./venv/bin/python main --video path/to/input_video.mp4 --work-dir runs/contact_bbox_bottom --contact-mode bbox_bottom
+./venv/bin/python main --video path/to/input_video.mp4 --work-dir runs/contact_hybrid --contact-mode hybrid
 ```
