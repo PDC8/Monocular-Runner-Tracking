@@ -13,7 +13,7 @@ Model weights are not stored in regular Git history. After cloning the repo, dow
 The script places these files under `models/`:
 
 - `models/base_best.pt`
-- `models/player_detect_yolov8l_best.pt`
+- `models/player_detect_best.pt`
 - `models/sam2.1_l.pt`
 
 By default, `download_models.sh` fetches release assets from `PDC8/Monocular_Runner_Tracking` tag `models-v1`. If you publish the assets under a different repo or tag, override the defaults:
@@ -33,8 +33,7 @@ cd Monocular_Runner_Tracking
 ./download_models.sh
 ./venv/bin/python main \
   --video videos/234595382.mp4 \
-  --work-dir runs/234595382_main_test_20260415 \
-  --contact-mode sam
+  --work-dir runs/234595382_main_test_20260415
 ```
 
 ## Default Paths Used By `main`
@@ -42,9 +41,9 @@ cd Monocular_Runner_Tracking
 When you do not pass model-path flags, `main` uses:
 
 - `--base-model`: `models/base_best.pt`
-- `--player-yolo-weights`: `models/player_detect_yolov8l_best.pt`
+- `--player-yolo-weights`: `models/player_detect_best.pt`
 - `--sam-weights`: `models/sam2.1_l.pt`
-- `--player-class`: `4` (matches `Player` in `player_detect_yolov8l_best.pt`)
+- `--player-class`: `4` (matches `Player` in `player_detect_best.pt`)
 
 Main output goes under `--work-dir` in fixed stage folders:
 
@@ -58,9 +57,9 @@ Main output goes under `--work-dir` in fixed stage folders:
 
 Use `--contact-mode` to choose how ground contact is defined:
 
-1. `sam` (default): SAM robust contact `(x, y)`.
+1. `sam`: SAM robust contact `(x, y)`.
 2. `bbox_bottom`: detection-box bottom center.
-3. `hybrid`: box-center `x` + SAM bottom `y`.
+3. `hybrid` (default): box-center `x` + SAM bottom `y`.
 
 Examples:
 
@@ -74,5 +73,5 @@ Examples:
 
 ```bash
 # Disable stage videos for faster test runs
-./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_no_video --contact-mode sam --no-video
+./venv/bin/python main --video videos/234595382.mp4 --work-dir runs/run_no_video --no-video
 ```

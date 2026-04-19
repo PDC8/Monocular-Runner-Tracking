@@ -688,8 +688,8 @@ def main() -> None:
     out_csv = args.output_dir / "tracks_with_sam_contact_infield_custom.csv"
     out_jsonl = args.output_dir / "tracks_with_sam_contact_infield_custom.jsonl"
     out_summary = args.output_dir / "track_summary_infield_custom.csv"
-    out_overlay_img = args.output_dir / "tracks_sam_overlay_infield_custom.png"
-    out_video = args.output_dir / "tracks_sam_overlay_infield_custom.mp4"
+    out_overlay_img = args.output_dir / "tracks_overlay_infield_custom.png"
+    out_video = args.output_dir / "tracks_overlay_infield_custom.mp4"
     out_meta = args.output_dir / "run_meta_infield_custom.json"
 
     write_csv_rows(out_csv, filtered_rows)

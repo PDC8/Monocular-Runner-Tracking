@@ -17,7 +17,16 @@ from typing import Any
 
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
+
+
+def default_inference_device() -> str:
+    if torch.cuda.is_available():
+        return "0"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,8 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--yolo-weights",
         type=Path,
-        default=models_dir / "player_detect_yolov8l_best.pt",
-        help="YOLO weights for player detection (default: models/player_detect_yolov8l_best.pt).",
+        default=models_dir / "player_detect_best.pt",
+        help="YOLO weights for player detection (default: models/player_detect_best.pt).",
     )
     parser.add_argument(
         "--sam-weights",
@@ -54,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         "--person-class",
         type=int,
         default=4,
-        help="YOLO class for players (default: 4 for player_detect_yolov8l_best.pt).",
+        help="YOLO class for players (default: 4 for player_detect_best.pt).",
     )
     parser.add_argument("--conf", type=float, default=0.15, help="YOLO confidence threshold.")
     parser.add_argument("--iou", type=float, default=0.5, help="YOLO IoU threshold.")
@@ -68,11 +77,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contact-mode",
         type=str,
-        default="sam",
+        default="hybrid",
         choices=["sam", "bbox_bottom", "hybrid"],
         help=(
             "Ground-contact mode passed to get_ground_contact.py: "
-            "sam | bbox_bottom | hybrid."
+            "sam | bbox_bottom | hybrid (default: hybrid)."
         ),
     )
     parser.add_argument(
@@ -91,7 +100,12 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Sliding-median window size (samples) for contact trajectory smoothing.",
     )
-    parser.add_argument("--device", type=str, default="0", help="Inference device.")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=default_inference_device(),
+        help="Inference device (default: auto-detect CUDA, then MPS, else CPU).",
+    )
     parser.add_argument("--fps", type=float, default=0.0, help="Override output video FPS (0 uses source video FPS).")
     parser.add_argument("--max-frames", type=int, default=0, help="Max extracted/processed frames (0=all).")
     parser.add_argument("--no-video", action="store_true", help="Disable overlay video from tracking stage.")

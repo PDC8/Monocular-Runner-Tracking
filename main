@@ -18,6 +18,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import torch
+
+
+def default_inference_device() -> str:
+    if torch.cuda.is_available():
+        return "0"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
 
 def parse_args() -> argparse.Namespace:
     this_dir = Path(__file__).resolve().parent
@@ -41,8 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--player-yolo-weights",
         type=Path,
-        default=models_dir / "player_detect_yolov8l_best.pt",
-        help="YOLO weights for player detection stage (default: models/player_detect_yolov8l_best.pt).",
+        default=models_dir / "player_detect_best.pt",
+        help="YOLO weights for player detection stage (default: models/player_detect_best.pt).",
     )
     parser.add_argument(
         "--sam-weights",
@@ -51,12 +61,17 @@ def parse_args() -> argparse.Namespace:
         help="SAM weights for player stage.",
     )
 
-    parser.add_argument("--device", type=str, default="0", help="Inference device used by stages.")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=default_inference_device(),
+        help="Inference device used by stages (default: auto-detect CUDA, then MPS, else CPU).",
+    )
     parser.add_argument(
         "--player-class",
         type=int,
         default=4,
-        help="Player class index for player detection model (default: 4 for player_detect_yolov8l_best.pt).",
+        help="Player class index for player detection model (default: 4 for player_detect_best.pt).",
     )
     parser.add_argument("--max-frames", type=int, default=0, help="Max frames (0=all).")
     parser.add_argument("--fps", type=float, default=0.0, help="Output FPS override (0 keeps source fps).")
@@ -102,11 +117,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contact-mode",
         type=str,
-        default="sam",
+        default="hybrid",
         choices=["sam", "bbox_bottom", "hybrid"],
         help=(
             "Ground-contact mode for player stage: "
-            "sam (SAM robust), bbox_bottom (box bottom-center), hybrid (box-center x + SAM bottom y)."
+            "sam (SAM robust), bbox_bottom (box bottom-center), hybrid (box-center x + SAM bottom y, default)."
         ),
     )
     parser.add_argument(
@@ -184,6 +199,7 @@ def main() -> None:
     infield_dir = work_dir / "03_infield_cone"
     velocity_dir = work_dir / "04_velocity"
     final_video_dir = work_dir / "05_final_video"
+    final_video_dir.mkdir(parents=True, exist_ok=True)
 
     cmd_bases = [
         python_exe,
@@ -296,6 +312,8 @@ def main() -> None:
         str(filtered_csv),
         "--output-dir",
         str(velocity_dir),
+        "--summary-output-dir",
+        str(final_video_dir),
         "--fps",
         str(filter_fps),
         "--max-step-ft",
@@ -361,13 +379,13 @@ def main() -> None:
                 "command": cmd_filter,
                 "meta": str(infield_dir / "run_meta_filter_region.json"),
                 "filtered_csv": str(infield_dir / "tracks_with_sam_contact_infield_custom.csv"),
-                "filtered_overlay_image": str(infield_dir / "tracks_sam_overlay_infield_custom.png"),
+                "filtered_overlay_image": str(infield_dir / "tracks_overlay_infield_custom.png"),
             },
             "get_velocity": {
                 "command": cmd_velocity,
                 "meta": str(velocity_dir / "run_meta_get_velocity.json"),
                 "velocity_csv": str(velocity_dir / "tracks_with_velocity.csv"),
-                "velocity_summary_csv": str(velocity_dir / "velocity_summary.csv"),
+                "velocity_summary_csv": str(final_video_dir / "velocity_summary.csv"),
                 "birdseye_image": str(velocity_dir / "birdseye_contacts_velocity.png"),
                 "birdseye_video": None if args.no_video else str(velocity_dir / "birdseye_contacts_velocity.mp4"),
                 "overlay_video": None if args.no_video else str(velocity_dir / "tracks_velocity_overlay.mp4"),

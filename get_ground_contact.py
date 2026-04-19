@@ -58,13 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contact-mode",
         type=str,
-        default="sam",
+        default="hybrid",
         choices=["sam", "bbox_bottom", "hybrid"],
         help=(
             "Ground-contact point mode: "
             "'sam' uses SAM robust contact (x,y), "
             "'bbox_bottom' uses detection-box bottom-center, "
-            "'hybrid' uses bbox-center x with SAM bottom y."
+            "'hybrid' uses bbox-center x with SAM bottom y (default)."
         ),
     )
     parser.add_argument(

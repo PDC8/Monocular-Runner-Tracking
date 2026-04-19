@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         help="Output directory for velocity artifacts.",
     )
     parser.add_argument(
+        "--summary-output-dir",
+        type=Path,
+        default=None,
+        help="Optional output directory for velocity_summary.csv (defaults to --output-dir).",
+    )
+    parser.add_argument(
         "--fps",
         type=float,
         default=30.0,
@@ -1065,9 +1071,12 @@ def main() -> None:
     birdseye_img = template.copy()
     draw_tracks_on_canvas(birdseye_img, mapper=mapper, by_track=by_track_smoothed)
 
+    summary_output_dir = args.summary_output_dir if args.summary_output_dir else args.output_dir
+    summary_output_dir.mkdir(parents=True, exist_ok=True)
+
     out_csv = args.output_dir / "tracks_with_velocity.csv"
     out_jsonl = args.output_dir / "tracks_with_velocity.jsonl"
-    out_summary = args.output_dir / "velocity_summary.csv"
+    out_summary = summary_output_dir / "velocity_summary.csv"
     out_birdseye_img = args.output_dir / "birdseye_contacts_velocity.png"
     out_birdseye_video = args.output_dir / "birdseye_contacts_velocity.mp4"
     out_overlay_video = args.output_dir / "tracks_velocity_overlay.mp4"

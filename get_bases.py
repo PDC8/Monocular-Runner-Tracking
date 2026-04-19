@@ -11,6 +11,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 CLASS_NAMES = ["home", "first", "second", "third"]
@@ -20,6 +21,14 @@ COLORS = {
     "second": (255, 0, 0),
     "third": (0, 255, 255),
 }
+
+
+def default_inference_device() -> str:
+    if torch.cuda.is_available():
+        return "0"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,7 +47,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--conf", type=float, default=0.25, help="YOLO confidence threshold.")
     parser.add_argument("--imgsz", type=int, default=1280, help="YOLO inference image size.")
-    parser.add_argument("--device", type=str, default="0", help="Inference device for YOLO.")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=default_inference_device(),
+        help="Inference device for YOLO (default: auto-detect CUDA, then MPS, else CPU).",
+    )
     parser.add_argument(
         "--frame-step",
         type=int,
